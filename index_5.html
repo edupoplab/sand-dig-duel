@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>바닷가 모래놀이 대결</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'DM Sans', sans-serif; background: #000; }
+    body { display: flex; position: relative; }
+
+    .game-half { position: relative; width: 50%; height: 100vh; overflow: hidden; background: #222; }
+    .cam-canvas  { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+    .sand-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; }
+
+    .score-display { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 30; font-size: 3rem; font-weight: 900; text-shadow: 2px 2px 8px rgba(0,0,0,0.6); }
+    .timer-display { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 50; }
+    .timer-display span { font-size: 2rem; font-weight: 900; }
+
+    .start-overlay { position: absolute; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.65); }
+    .start-btn { font-size: 2.5rem; padding: 1rem 3rem; border-radius: 2rem; border: none; cursor: pointer; animation: pulse 1.5s infinite; background: #ffd93d; color: #7a4a00; font-weight: 900; box-shadow: 0 6px 0 #d1a300; }
+    .start-btn:disabled { background: #999; color: #eee; box-shadow: 0 6px 0 #666; cursor: default; animation: none; }
+    @keyframes pulse { 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.06); } }
+
+    .result-overlay { position: absolute; inset: 0; z-index: 95; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.2rem; background: rgba(0,0,0,0.55); padding: 1rem; text-align: center; }
+    .result-overlay .start-btn { font-size: 1.6rem; padding: 0.7rem 1.8rem; }
+    .result-text { font-size: 2.6rem; font-weight: 900; color: #fff; text-shadow: 2px 2px 8px rgba(0,0,0,0.6); line-height: 1.3; }
+    .result-overlay.is-winner .result-text { font-size: 3rem; }
+
+    .shovel-cursor { position: absolute; width: 64px; height: 64px; z-index: 20; pointer-events: none; display: none; filter: drop-shadow(2px 3px 3px rgba(0,0,0,0.5)); }
+    .shovel-cursor svg { width: 100%; height: 100%; }
+
+    .celebration { position: absolute; inset: 0; z-index: 90; pointer-events: none; overflow: hidden; }
+    .confetti { position: absolute; width: 12px; height: 12px; border-radius: 50%; animation: fall 2s ease-in forwards; }
+    @keyframes fall { 0%{ transform: translateY(-20px) rotate(0deg); opacity:1; } 100%{ transform: translateY(100vh) rotate(720deg); opacity:0; } }
+    .bubble { position: absolute; border-radius: 50%; background: rgba(120,210,255,0.7); animation: rise 2.5s ease-out forwards; }
+    @keyframes rise { 0%{ transform: translateY(0) scale(1); opacity:1; } 100%{ transform: translateY(-60vh) scale(0.3); opacity:0; } }
+    .found-emoji { position: absolute; font-size: 3rem; animation: pop 0.6s ease-out forwards; z-index: 40; pointer-events: none; transform: translate(-50%, -50%); }
+    @keyframes pop { 0%{ transform: translate(-50%,-50%) scale(0); opacity:0; } 50%{ transform: translate(-50%,-50%) scale(1.3); opacity:1; } 100%{ transform: translate(-50%,-50%) scale(1); opacity:1; } }
+  </style>
+</head>
+<body>
+  <header class="timer-display">
+    <span id="timer-label" class="bg-white/85 px-4 py-1 rounded-full">⏱️ 60s</span>
+  </header>
+
+  <div id="start-overlay" class="start-overlay">
+    <button id="start-btn" class="start-btn" onclick="startGame()" disabled>👋 손 인식 준비 중...</button>
+  </div>
+
+  <!-- Player 1 (왼쪽) -->
+  <div class="game-half" id="p1-area">
+    <canvas id="cam1" class="cam-canvas"></canvas>
+    <canvas id="sand1" class="sand-canvas"></canvas>
+    <div class="score-display text-yellow-300" id="score1">⭐ 0</div>
+    <div id="celeb1" class="celebration" style="display:none;"></div>
+    <div id="result-overlay-1" class="result-overlay" style="display:none;">
+      <p id="result-text-1" class="result-text"></p>
+      <button class="start-btn" onclick="resetGame()">🔄 다시 하기</button>
+    </div>
+  </div>
+
+  <!-- Player 2 (오른쪽) -->
+  <div class="game-half" id="p2-area">
+    <canvas id="cam2" class="cam-canvas"></canvas>
+    <canvas id="sand2" class="sand-canvas"></canvas>
+    <div class="score-display text-cyan-300" id="score2">⭐ 0</div>
+    <div id="celeb2" class="celebration" style="display:none;"></div>
+    <div id="result-overlay-2" class="result-overlay" style="display:none;">
+      <p id="result-text-2" class="result-text"></p>
+      <button class="start-btn" onclick="resetGame()">🔄 다시 하기</button>
+    </div>
+  </div>
+
+  <!-- 카메라 스트림을 담는 숨김 video (화면에는 안 보이고, 좌/우로 잘라서 각 canvas에 그림) -->
+  <video id="sharedVideo" autoplay playsinline muted style="display:none;"></video>
+
+  <script>
+    const GAME_TIME = 60;
+    const CREATURES = ['🐚','⭐','🦀','🐙','🐠','🦐','🐡','🦑','🐢','🦞','🐬','🦈','🐳','🦭'];
+    const CREATURE_COUNT_MIN = 12, CREATURE_COUNT_MAX = 16;
+    const MOTION_THRESHOLD = 80;   // 손 인식 실패 시 대체(전신 움직임) 방식에서 사용
+    const STEP = 10;
+    const BRUSH_RADIUS = 20;   // 삽으로 한 번에 파내는 범위
+    const DECAY = 120;         // 한 번 감지될 때마다 옅어지는 정도 (255 기준, 값이 클수록 빨리 사라짐 — 120이면 약 2번 지나가면 다 파짐)
+    const HANDS_PER_PLAYER = 2; // 한 플레이어 쪽에서 동시에 추적할 손 개수(양손 사용 대비)
+
+    const SHOVEL_SVG = `
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <rect x="29" y="4" width="6" height="30" rx="3" fill="#a9702f"/>
+        <path d="M16 30 C16 24 24 20 32 20 C40 20 48 24 48 30 L46 46 C45 52 39 56 32 56 C25 56 19 52 18 46 Z" fill="#c9ccd1" stroke="#8b8f96" stroke-width="2"/>
+        <path d="M20 31 C20 27 25 24 32 24 C39 24 44 27 44 31" fill="none" stroke="#e8eaee" stroke-width="2"/>
+      </svg>`;
+
+    let gameRunning = false, timeLeft = GAME_TIME;
+    let raceEnded = false;
+    let scores = [0, 0];
+    let players = [];
+    let timerInterval;
+
+    let sharedVideo, mirrorCanvas, mirrorCtx, fullW = 0, fullH = 0;
+
+    // 손 인식(MediaPipe HandLandmarker) 관련 상태
+    let handLandmarker = null;
+    let handTrackingReady = false;
+
+    // Audio context for sound effects
+    let audioCtx;
+    function playFound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.connect(g); g.connect(audioCtx.destination);
+        o.type = 'sine'; o.frequency.setValueAtTime(880, audioCtx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.15);
+        g.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        o.start(); o.stop(audioCtx.currentTime + 0.3);
+    }
+
+    // MediaPipe HandLandmarker 로드. 실패하면 손 인식 없이 기존 전신 움직임 감지로 자동 대체됨.
+    async function initHandTracking() {
+        const btn = document.getElementById('start-btn');
+        try {
+            const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+            const { HandLandmarker, FilesetResolver } = vision;
+            const filesetResolver = await FilesetResolver.forVisionTasks(
+                'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+            );
+            handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
+                baseOptions: {
+                    modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+                    delegate: 'GPU'
+                },
+                runningMode: 'VIDEO',
+                numHands: HANDS_PER_PLAYER * 2
+            });
+            handTrackingReady = true;
+        } catch (e) {
+            console.error('손 인식 모델을 불러오지 못했어요. 전신 움직임 감지 방식으로 대체합니다.', e);
+            handTrackingReady = false;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '🖐️ 모래놀이 시작! 🏖️';
+        }
+    }
+    initHandTracking();
+
+    class PlayerGame {
+        constructor(idx) {
+            this.idx = idx;
+            this.camCanvas = document.getElementById('cam' + (idx + 1));
+            this.sandCanvas = document.getElementById('sand' + (idx + 1));
+            this.camCtx = this.camCanvas.getContext('2d', { willReadFrequently: true });
+            this.sandCtx = this.sandCanvas.getContext('2d', { willReadFrequently: true });
+            this.prevFrame = null;
+            this.creatures = [];
+            this.revealed = new Set();
+            this.w = 0; this.h = 0; this.sx = 0;
+            this.shovels = [];
+        }
+
+        // 미러링된 전체 프레임(mirrorCanvas)에서 이 플레이어가 담당하는 절반만 잘라 쓰도록 크기/좌표 설정
+        setup() {
+            this.w = Math.floor(fullW / 2);
+            this.h = fullH;
+            this.sx = this.idx === 0 ? 0 : this.w; // 왼쪽 화면은 왼쪽 절반, 오른쪽 화면은 오른쪽 절반
+            this.camCanvas.width = this.w; this.camCanvas.height = this.h;
+            this.sandCanvas.width = this.w; this.sandCanvas.height = this.h;
+            this.prevFrame = null;
+            this.drawSand();
+            this.placeCreatures();
+            this.setupShovels();
+        }
+
+        setupShovels() {
+            const area = document.getElementById('p' + (this.idx + 1) + '-area');
+            area.querySelectorAll('.shovel-cursor').forEach(el => el.remove());
+            this.shovels = [];
+            for (let i = 0; i < HANDS_PER_PLAYER; i++) {
+                const el = document.createElement('div');
+                el.className = 'shovel-cursor';
+                el.innerHTML = SHOVEL_SVG;
+                area.appendChild(el);
+                this.shovels.push(el);
+            }
+        }
+
+        showShovel(slotIdx, x, y, angleDeg) {
+            const el = this.shovels[slotIdx];
+            if (!el) return;
+            el.style.display = 'block';
+            el.style.left = ((x / this.w) * 100) + '%';
+            el.style.top = ((y / this.h) * 100) + '%';
+            el.style.transform = `translate(-50%, -75%) rotate(${angleDeg}deg)`;
+        }
+
+        hideShovel(slotIdx) {
+            const el = this.shovels[slotIdx];
+            if (el) el.style.display = 'none';
+        }
+
+        hideAllShovels() {
+            this.shovels.forEach(el => el.style.display = 'none');
+        }
+
+        drawSand() {
+            const ctx = this.sandCtx;
+            const grad = ctx.createLinearGradient(0, 0, 0, this.h);
+            grad.addColorStop(0, '#f4d58d');
+            grad.addColorStop(1, '#c9a84c');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, this.w, this.h);
+            for (let i = 0; i < 300; i++) {
+                ctx.fillStyle = `rgba(180,140,60,${Math.random() * 0.4})`;
+                ctx.beginPath();
+                ctx.arc(Math.random() * this.w, Math.random() * this.h, Math.random() * 4 + 1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        placeCreatures() {
+            this.creatures = [];
+            this.revealed = new Set();
+            const count = CREATURE_COUNT_MIN + Math.floor(Math.random() * (CREATURE_COUNT_MAX - CREATURE_COUNT_MIN + 1));
+            const radius = Math.min(this.w, this.h) * 0.075;
+            const minDist = radius * 2.4;   // 생물끼리 겹치지 않도록 최소 간격
+            const margin = radius * 1.4;    // 화면 가장자리에 너무 붙지 않도록 여백
+
+            let attempts = 0;
+            while (this.creatures.length < count && attempts < count * 60) {
+                attempts++;
+                const x = margin + Math.random() * (this.w - margin * 2);
+                const y = margin + Math.random() * (this.h - margin * 2);
+                let ok = true;
+                for (const c of this.creatures) {
+                    const dx = c.x - x, dy = c.y - y;
+                    if (Math.sqrt(dx * dx + dy * dy) < minDist) { ok = false; break; }
+                }
+                if (ok) {
+                    const emoji = CREATURES[Math.floor(Math.random() * CREATURES.length)];
+                    this.creatures.push({ emoji, x, y, radius });
+                }
+            }
+        }
+
+        // mirrorCanvas(좌우 반전된 전체 카메라 화면)에서 내 절반만 잘라서 배경으로 그림
+        updateCamera() {
+            this.camCtx.drawImage(mirrorCanvas, this.sx, 0, this.w, this.h, 0, 0, this.w, this.h);
+        }
+
+        // 손(삽) 위치 한 곳을 실제로 파낸다 (손 인식 방식)
+        eraseAt(cx, cy) {
+            const sandData = this.sandCtx.getImageData(0, 0, this.w, this.h);
+            const r = BRUSH_RADIUS;
+            let changed = false;
+            for (let dy = -r; dy < r; dy++) {
+                for (let dx = -r; dx < r; dx++) {
+                    const px = Math.round(cx + dx), py = Math.round(cy + dy);
+                    if (px < 0 || px >= this.w || py < 0 || py >= this.h) continue;
+                    const distRatio = Math.sqrt(dx * dx + dy * dy) / r;
+                    if (distRatio > 1) continue;
+                    changed = true;
+                    const ai = (py * this.w + px) * 4 + 3;
+                    const falloff = 1 - distRatio * 0.5;
+                    sandData.data[ai] = Math.max(0, sandData.data[ai] - DECAY * falloff);
+                }
+            }
+            if (changed) {
+                this.sandCtx.putImageData(sandData, 0, 0);
+                this.checkRevealed();
+            }
+        }
+
+        // 손 인식 모델을 못 불러왔을 때의 대체 방식: 전신 움직임(프레임 차이) 감지
+        legacyMotionUpdate() {
+            const curr = this.camCtx.getImageData(0, 0, this.w, this.h);
+            if (this.prevFrame) {
+                const sandData = this.sandCtx.getImageData(0, 0, this.w, this.h);
+                let changed = false;
+                for (let y = 0; y < this.h; y += STEP) {
+                    for (let x = 0; x < this.w; x += STEP) {
+                        const i = (y * this.w + x) * 4;
+                        const diff = Math.abs(curr.data[i] - this.prevFrame.data[i]) +
+                                     Math.abs(curr.data[i + 1] - this.prevFrame.data[i + 1]) +
+                                     Math.abs(curr.data[i + 2] - this.prevFrame.data[i + 2]);
+                        if (diff > MOTION_THRESHOLD) {
+                            changed = true;
+                            for (let dy = -BRUSH_RADIUS; dy < BRUSH_RADIUS; dy++) {
+                                for (let dx = -BRUSH_RADIUS; dx < BRUSH_RADIUS; dx++) {
+                                    const px = x + dx, py = y + dy;
+                                    if (px >= 0 && px < this.w && py >= 0 && py < this.h) {
+                                        const distRatio = Math.sqrt(dx * dx + dy * dy) / BRUSH_RADIUS;
+                                        if (distRatio > 1) continue;
+                                        const ai = (py * this.w + px) * 4 + 3;
+                                        const falloff = 1 - distRatio * 0.5;
+                                        sandData.data[ai] = Math.max(0, sandData.data[ai] - DECAY * falloff);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (changed) {
+                    this.sandCtx.putImageData(sandData, 0, 0);
+                    this.checkRevealed();
+                }
+            }
+            this.prevFrame = curr;
+        }
+
+        checkRevealed() {
+            const sandData = this.sandCtx.getImageData(0, 0, this.w, this.h);
+            for (let i = 0; i < this.creatures.length; i++) {
+                if (this.revealed.has(i)) continue;
+                const c = this.creatures[i];
+                let clear = 0, total = 0;
+                const r = c.radius * 0.6;
+                for (let dy = -r; dy < r; dy += 6) {
+                    for (let dx = -r; dx < r; dx += 6) {
+                        const px = Math.round(c.x + dx), py = Math.round(c.y + dy);
+                        if (px >= 0 && px < this.w && py >= 0 && py < this.h) {
+                            total++;
+                            if (sandData.data[(py * this.w + px) * 4 + 3] < 50) clear++;
+                        }
+                    }
+                }
+                if (total > 0 && clear / total > 0.45) {
+                    this.revealed.add(i);
+                    scores[this.idx]++;
+                    updateScores();
+                    playFound();
+                    this.showFoundEmoji(c);
+                }
+            }
+            // 이 플레이어가 자기 쪽 생물을 모두 찾았으면 즉시 승리 처리
+            if (this.revealed.size === this.creatures.length && !raceEnded) {
+                raceEnded = true;
+                endGameByRace(this.idx);
+            }
+        }
+
+        showFoundEmoji(c) {
+            const area = document.getElementById('p' + (this.idx + 1) + '-area');
+            const el = document.createElement('div');
+            el.className = 'found-emoji';
+            el.textContent = c.emoji;
+            el.style.left = ((c.x / this.w) * 100) + '%';
+            el.style.top = ((c.y / this.h) * 100) + '%';
+            area.appendChild(el);
+            setTimeout(() => el.remove(), 2000);
+        }
+    }
+
+    function updateScores() {
+        document.getElementById('score1').textContent = '⭐ ' + scores[0];
+        document.getElementById('score2').textContent = '⭐ ' + scores[1];
+    }
+
+    function updateTimer() {
+        document.getElementById('timer-label').textContent = '⏱️ ' + timeLeft + 's';
+    }
+
+    async function startGame() {
+        document.getElementById('start-overlay').style.display = 'none';
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1280 }, height: { ideal: 480 } },
+                audio: false
+            });
+
+            sharedVideo = document.getElementById('sharedVideo');
+            sharedVideo.srcObject = stream;
+
+            await new Promise((resolve) => {
+                sharedVideo.onloadedmetadata = () => {
+                    sharedVideo.play().catch(e => console.error('Video play failed:', e));
+                    resolve();
+                };
+            });
+
+            fullW = sharedVideo.videoWidth;
+            fullH = sharedVideo.videoHeight;
+
+            mirrorCanvas = document.createElement('canvas');
+            mirrorCanvas.width = fullW;
+            mirrorCanvas.height = fullH;
+            mirrorCtx = mirrorCanvas.getContext('2d', { willReadFrequently: true });
+
+            players = [new PlayerGame(0), new PlayerGame(1)];
+            players.forEach(p => p.setup());
+
+            gameRunning = true;
+            timeLeft = GAME_TIME;
+            scores = [0, 0];
+            raceEnded = false;
+            updateScores();
+            updateTimer();
+
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                updateTimer();
+                if (timeLeft <= 0) endGame();
+            }, 1000);
+
+            requestAnimationFrame(gameLoop);
+        } catch (e) {
+            console.error('카메라 접근 실패:', e);
+            alert('카메라를 사용할 수 없어요. 브라우저의 카메라 권한을 확인해주세요! (HTTPS 주소에서 실행해야 카메라가 열립니다)');
+            document.getElementById('start-overlay').style.display = 'flex';
+        }
+    }
+
+    function gameLoop(now) {
+        if (!gameRunning) return;
+        // 전체 영상을 좌우 반전(거울 모드)해서 mirrorCanvas에 그린 뒤, 각 플레이어가 자기 절반만 잘라 씀
+        mirrorCtx.save();
+        mirrorCtx.scale(-1, 1);
+        mirrorCtx.drawImage(sharedVideo, -fullW, 0, fullW, fullH);
+        mirrorCtx.restore();
+
+        for (const p of players) {
+            if (!gameRunning) break;
+            p.updateCamera();
+        }
+
+        if (gameRunning) {
+            if (handTrackingReady) {
+                const results = handLandmarker.detectForVideo(sharedVideo, now);
+                processHands(results);
+            } else {
+                for (const p of players) {
+                    if (!gameRunning) break;
+                    p.legacyMotionUpdate();
+                }
+            }
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    // 손 인식 결과를 좌/우 플레이어에게 배정하고, 검지 끝 위치에서 모래를 파낸다
+    function processHands(results) {
+        const slotUsed = [0, 0];
+        if (results && results.landmarks) {
+            for (let h = 0; h < results.landmarks.length; h++) {
+                const lm = results.landmarks[h];
+                const wrist = lm[0], tip = lm[8];
+                if (!wrist || !tip) continue;
+
+                // 카메라는 좌우 반전(거울)해서 보여주므로 좌표도 동일하게 반전
+                const mirroredWristX = 1 - wrist.x;
+                const mirroredTipX = 1 - tip.x;
+                const screenX = mirroredTipX * fullW;
+
+                const side = (mirroredWristX * fullW) < (fullW / 2) ? 0 : 1;
+                const player = players[side];
+                if (!player) continue;
+
+                const localX = screenX - player.sx;
+                const localY = tip.y * fullH;
+                if (localX < 0 || localX > player.w || localY < 0 || localY > player.h) continue;
+
+                player.eraseAt(localX, localY);
+
+                const slotIdx = slotUsed[side]++;
+                if (slotIdx < HANDS_PER_PLAYER) {
+                    const angle = Math.atan2(localY - (wrist.y * fullH), localX - (mirroredWristX * fullW - player.sx)) * 180 / Math.PI + 90;
+                    player.showShovel(slotIdx, localX, localY, angle);
+                }
+            }
+        }
+        players.forEach((p, idx) => {
+            for (let s = slotUsed[idx]; s < HANDS_PER_PLAYER; s++) p.hideShovel(s);
+        });
+    }
+
+    function endGame() {
+        gameRunning = false;
+        clearInterval(timerInterval);
+        players.forEach(p => p.hideAllShovels());
+        const winner = scores[0] > scores[1] ? 0 : scores[1] > scores[0] ? 1 : -1;
+        showResult(winner);
+    }
+
+    // 한쪽이 자기 모래를 다 파냈을 때(생물을 모두 찾았을 때) 즉시 승리 처리
+    function endGameByRace(winnerIdx) {
+        gameRunning = false;
+        clearInterval(timerInterval);
+        players.forEach(p => p.hideAllShovels());
+        showResult(winnerIdx, true);
+    }
+
+    // 결과 화면을 승/패 각자의 화면에 따로 보여준다. winner: 0(왼쪽)/1(오른쪽)/-1(무승부)
+    function showResult(winner, isRace) {
+        for (let i = 0; i < 2; i++) {
+            const overlay = document.getElementById('result-overlay-' + (i + 1));
+            const text = document.getElementById('result-text-' + (i + 1));
+            overlay.style.display = 'flex';
+            if (winner === -1) {
+                overlay.classList.remove('is-winner');
+                text.innerHTML = '🤝 무승부! 🤝';
+            } else if (winner === i) {
+                overlay.classList.add('is-winner');
+                text.innerHTML = isRace
+                    ? '🎉 승리! 🎉<br><span class="text-2xl">🏖️ 모래를 다 파냈어요!</span>'
+                    : '🎉 승리! 🎉';
+            } else {
+                overlay.classList.remove('is-winner');
+                text.innerHTML = '💪 아쉬워요!<br><span class="text-2xl">다음엔 이길 수 있어요</span>';
+            }
+        }
+        if (winner !== -1) celebrate(winner);
+    }
+
+    function celebrate(idx) {
+        playApplause();
+        const el = document.getElementById('celeb' + (idx + 1));
+        el.style.display = 'block';
+        const colors = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff', '#ff9a9e', '#a18cd1'];
+        for (let i = 0; i < 60; i++) {
+            const c = document.createElement('div');
+            c.className = 'confetti';
+            c.style.left = Math.random() * 100 + '%';
+            c.style.top = '-10px';
+            c.style.background = colors[Math.floor(Math.random() * colors.length)];
+            c.style.animationDelay = Math.random() * 1.5 + 's';
+            el.appendChild(c);
+        }
+        for (let i = 0; i < 30; i++) {
+            const b = document.createElement('div');
+            b.className = 'bubble';
+            b.style.left = Math.random() * 100 + '%';
+            b.style.bottom = '0';
+            b.style.animationDelay = Math.random() * 2 + 's';
+            b.style.width = b.style.height = (Math.random() * 20 + 10) + 'px';
+            el.appendChild(b);
+        }
+    }
+
+    // 박수(짝짝짝) + 짧은 축하 팡파레를 코드로 직접 합성해서 재생 (외부 음원 파일 불필요)
+    function playApplause() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const now = audioCtx.currentTime;
+
+        // 박수 소리: 짧은 노이즈 버스트를 여러 번 겹쳐서 "짝짝짝" 느낌 연출
+        for (let i = 0; i < 16; i++) {
+            const t = now + i * (0.08 + Math.random() * 0.05);
+            const bufferSize = Math.floor(audioCtx.sampleRate * 0.05);
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let j = 0; j < bufferSize; j++) {
+                data[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / bufferSize, 2);
+            }
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.value = 1400 + Math.random() * 1800;
+            filter.Q.value = 0.7;
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.5, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+            noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+            noise.start(t); noise.stop(t + 0.09);
+        }
+
+        // 짧은 승리 팡파레 멜로디 (도-미-솔-높은도)
+        const notes = [523.25, 659.25, 783.99, 1046.5];
+        notes.forEach((freq, i) => {
+            const t2 = now + 0.35 + i * 0.13;
+            const o = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            o.type = 'triangle';
+            o.frequency.setValueAtTime(freq, t2);
+            g.gain.setValueAtTime(0.25, t2);
+            g.gain.exponentialRampToValueAtTime(0.001, t2 + 0.25);
+            o.connect(g); g.connect(audioCtx.destination);
+            o.start(t2); o.stop(t2 + 0.3);
+        });
+    }
+
+    function resetGame() {
+        document.getElementById('result-overlay-1').style.display = 'none';
+        document.getElementById('result-overlay-2').style.display = 'none';
+        document.getElementById('result-overlay-1').classList.remove('is-winner');
+        document.getElementById('result-overlay-2').classList.remove('is-winner');
+        document.getElementById('celeb1').style.display = 'none';
+        document.getElementById('celeb1').innerHTML = '';
+        document.getElementById('celeb2').style.display = 'none';
+        document.getElementById('celeb2').innerHTML = '';
+        document.querySelectorAll('.found-emoji').forEach(e => e.remove());
+        startGame();
+    }
+  </script>
+</body>
+</html>
