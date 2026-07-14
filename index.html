@@ -507,11 +507,11 @@
             } else if (winner === i) {
                 overlay.classList.add('is-winner');
                 text.innerHTML = isRace
-                    ? '🎉 승리! 🎉<br><span class="text-2xl">🏖️ 모래를 다 파냈어요!</span>'
-                    : '🎉 승리! 🎉';
+                    ? '🎉 축하해요! 🎉<br><span class="text-2xl">🏖️ 모래를 다 파냈어요!</span>'
+                    : '🎉 축하해요!! 🎉';
             } else {
                 overlay.classList.remove('is-winner');
-                text.innerHTML = '💪 아쉬워요!<br><span class="text-2xl">다음엔 이길 수 있어요</span>';
+                text.innerHTML = '💪 괜찮아요!<br><span class="text-2xl">다시 해 볼까요?</span>';
             }
         }
         if (winner !== -1) celebrate(winner);
